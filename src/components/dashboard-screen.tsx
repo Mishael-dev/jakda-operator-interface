@@ -3,15 +3,30 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { getAlerts } from "../api/alerts";
 
+type Responder = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  distance_km?: number;
+  phone?: string;
+  assigned?: boolean;
+};
+
 type Alert = {
   id: string;
   user_id: string;
+  user_name?: string;
+  phone?: string;
   status: string;
   lat: number;
   lng: number;
   legitimacy_score: number;
   ai_brief: string | null;
   triggered_at: string;
+  crowd_responses?: { yes: number; no: number };
+  nearby_responders?: Responder[];
+  responders?: Responder[];
 };
 
 const STATUS_COLOR: Record<string, string> = {
@@ -152,11 +167,37 @@ export default function DashboardScreen() {
   const mapContainer = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<Record<string, maplibregl.Marker>>({});
+  const responderMarkersRef = useRef<Record<string, maplibregl.Marker>>({});
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [responderAssignments, setResponderAssignments] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
+
+  const selectedAlert = alerts.find((alert) => alert.id === selectedId) || null;
+  const responders = selectedAlert?.nearby_responders ?? selectedAlert?.responders ?? [];
+
+  const getNearbyResponders = (alert: Alert | null) => alert?.nearby_responders ?? alert?.responders ?? [];
+
+  const formatResponderDistance = (distance?: number) =>
+    distance == null ? "--" : `${distance.toFixed(1)} km`;
+
+  const handleAssignResponder = (responder: Responder) => {
+    setResponderAssignments((prev) => ({
+      ...prev,
+      [responder.id]: !prev[responder.id],
+    }));
+  };
+
+  const handleAssignAll = () => {
+    const nextAssignments = { ...responderAssignments };
+    responders.forEach((responder) => {
+      nextAssignments[responder.id] = true;
+    });
+    setResponderAssignments(nextAssignments);
+  };
 
   // Init map
   useEffect(() => {
@@ -250,11 +291,84 @@ export default function DashboardScreen() {
     return () => clearInterval(interval);
   }, [fetchAlerts]);
 
+  useEffect(() => {
+    if (selectedId && !alerts.some((alert) => alert.id === selectedId)) {
+      setSelectedId(null);
+    }
+  }, [alerts, selectedId]);
+
   const activeCount = alerts.filter(
     (a) => a.status === "active" || a.status === "pending"
   ).length;
 
-  const selectedAlert = alerts.find((a) => a.id === selectedId);
+  useEffect(() => {
+    const audio = new Audio("/alert.mp3");
+    audio.loop = true;
+    audio.volume = 0.35;
+    audioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const unattended = alerts.some(
+      (a) => a.status === "active" || a.status === "pending"
+    );
+
+    if (unattended) {
+      audio.play().catch(() => {
+        console.warn("Alert audio is blocked until user interaction.");
+      });
+    } else {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+  }, [alerts]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    const nearby = getNearbyResponders(selectedAlert);
+    const seen = new Set(nearby.map((responder) => responder.id));
+
+    Object.keys(responderMarkersRef.current).forEach((id) => {
+      if (!seen.has(id)) {
+        responderMarkersRef.current[id].remove();
+        delete responderMarkersRef.current[id];
+      }
+    });
+
+    if (!selectedAlert) return;
+
+    nearby.forEach((responder) => {
+      if (responderMarkersRef.current[responder.id]) return;
+
+      const el = document.createElement("div");
+      el.style.width = "14px";
+      el.style.height = "14px";
+      el.style.borderRadius = "50%";
+      el.style.backgroundColor = "#ffb800";
+      el.style.boxShadow = "0 0 12px rgba(255,184,0,0.6), 0 0 24px rgba(255,184,0,0.15)";
+      el.style.border = "2px solid rgba(255,255,255,0.18)";
+      el.style.cursor = "pointer";
+      el.title = responder.name || "Responder";
+      el.addEventListener("click", () => setSelectedId(selectedAlert.id));
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([responder.lng, responder.lat])
+        .addTo(map);
+
+      responderMarkersRef.current[responder.id] = marker;
+    });
+  }, [selectedAlert]);
+
+  const assignedCount = responders.filter((responder) => responderAssignments[responder.id]).length;
 
   // Fly to selected alert
   useEffect(() => {
@@ -435,152 +549,261 @@ export default function DashboardScreen() {
         </div>
       </div>
 
-      {/* Selected alert detail — floating card bottom right */}
+      {/* Selected alert detail — full-screen modal */}
       {selectedAlert && (
         <div style={{
           position: "absolute",
-          bottom: 20,
-          right: 20,
-          width: 300,
-          background: "rgba(6,10,7,0.92)",
-          backdropFilter: "blur(16px)",
-          border: "1px solid rgba(0,255,100,0.15)",
-          boxShadow: "0 0 40px rgba(0,0,0,0.6), 0 0 20px rgba(0,255,100,0.05)",
-          zIndex: 10,
-          padding: 16,
+          inset: 0,
+          zIndex: 30,
+          background: "rgba(0,0,0,0.62)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
         }}>
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <HexBadge status={selectedAlert.status} />
-              <div>
-                <div style={{
-                  fontSize: 9,
-                  letterSpacing: "0.2em",
-                  color: STATUS_COLOR[selectedAlert.status],
-                  textShadow: `0 0 8px ${STATUS_GLOW[selectedAlert.status]}`,
-                  marginBottom: 2,
-                }}>
-                  {selectedAlert.status.toUpperCase()}
-                </div>
-                <div style={{ fontSize: 7, color: "rgba(0,255,100,0.3)", letterSpacing: "0.1em" }}>
-                  {timeAgo(selectedAlert.triggered_at)} AGO
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedId(null)}
-              style={{
-                background: "none",
-                border: "none",
-                color: "rgba(0,255,100,0.3)",
-                cursor: "pointer",
-                fontSize: 14,
-                lineHeight: 1,
-                padding: 0,
-                fontFamily: "'Share Tech Mono', monospace",
-              }}
-            >
-              ✕
-            </button>
-          </div>
-
-          {/* Coordinates */}
           <div style={{
-            padding: "8px 10px",
-            background: "rgba(0,255,100,0.03)",
-            border: "1px solid rgba(0,255,100,0.08)",
-            marginBottom: 10,
+            width: "min(100%, 960px)",
+            maxHeight: "calc(100vh - 48px)",
+            overflowY: "auto",
+            background: "rgba(6,10,7,0.96)",
+            border: "1px solid rgba(0,255,100,0.16)",
+            borderRadius: 22,
+            boxShadow: "0 0 60px rgba(0,0,0,0.55)",
+            padding: 28,
           }}>
-            <div style={{ fontSize: 7, letterSpacing: "0.15em", color: "rgba(0,255,100,0.35)", marginBottom: 4 }}>
-              COORDINATES
-            </div>
-            <div style={{ fontSize: 11, letterSpacing: "0.1em", color: "rgba(0,255,100,0.8)" }}>
-              {selectedAlert.lat.toFixed(6)}°N
-            </div>
-            <div style={{ fontSize: 11, letterSpacing: "0.1em", color: "rgba(0,255,100,0.8)" }}>
-              {selectedAlert.lng.toFixed(6)}°E
-            </div>
-          </div>
-
-          {/* Legitimacy */}
-          <div style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontSize: 7, letterSpacing: "0.15em", color: "rgba(0,255,100,0.35)" }}>
-                LEGITIMACY SCORE
-              </span>
-              <span style={{ fontSize: 7, letterSpacing: "0.1em", color: "rgba(0,255,100,0.5)" }}>
-                {selectedAlert.legitimacy_score}%
-              </span>
-            </div>
-            <div style={{ height: 3, background: "rgba(0,255,100,0.08)", borderRadius: 2 }}>
-              <div style={{
-                height: "100%",
-                width: `${selectedAlert.legitimacy_score}%`,
-                background: selectedAlert.legitimacy_score > 60 ? "#00ff64"
-                  : selectedAlert.legitimacy_score > 30 ? "#ffb800" : "#ff3b3b",
-                borderRadius: 2,
-                transition: "width 0.3s ease",
-                boxShadow: selectedAlert.legitimacy_score > 60
-                  ? "0 0 6px rgba(0,255,100,0.5)"
-                  : selectedAlert.legitimacy_score > 30
-                  ? "0 0 6px rgba(255,184,0,0.5)"
-                  : "0 0 6px rgba(255,59,59,0.5)",
-              }} />
-            </div>
-          </div>
-
-          {/* AI Brief */}
-          {selectedAlert.ai_brief && (
-            <div style={{
-              padding: "8px 10px",
-              background: "rgba(0,255,100,0.02)",
-              border: "1px solid rgba(0,255,100,0.06)",
-              marginBottom: 12,
-            }}>
-              <div style={{ fontSize: 7, letterSpacing: "0.15em", color: "rgba(0,255,100,0.35)", marginBottom: 4 }}>
-                AI BRIEF
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 20, marginBottom: 24 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <HexBadge status={selectedAlert.status} />
+                <div>
+                  <div style={{
+                    fontSize: 14,
+                    letterSpacing: "0.25em",
+                    color: STATUS_COLOR[selectedAlert.status],
+                    textShadow: `0 0 12px ${STATUS_GLOW[selectedAlert.status]}`,
+                    marginBottom: 4,
+                  }}>
+                    {selectedAlert.status.toUpperCase()}
+                  </div>
+                  <div style={{ fontSize: 9, letterSpacing: "0.16em", color: "rgba(0,255,100,0.45)" }}>
+                    {timeAgo(selectedAlert.triggered_at)} AGO • {selectedAlert.lat.toFixed(4)}°N · {selectedAlert.lng.toFixed(4)}°E
+                  </div>
+                </div>
               </div>
-              <div style={{ fontSize: 9, color: "rgba(0,255,100,0.6)", lineHeight: 1.6, letterSpacing: "0.05em" }}>
-                {selectedAlert.ai_brief}
+              <button
+                onClick={() => setSelectedId(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "rgba(0,255,100,0.45)",
+                  cursor: "pointer",
+                  fontSize: 22,
+                  lineHeight: 1,
+                  padding: 0,
+                  fontFamily: "'Share Tech Mono', monospace",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 320px", minWidth: 300, display: "flex", flexDirection: "column", gap: 18 }}>
+                <div style={{ display: "grid", gap: 12 }}>
+                  <div style={{
+                    padding: "16px 18px",
+                    background: "rgba(0,255,100,0.03)",
+                    border: "1px solid rgba(0,255,100,0.08)",
+                    borderRadius: 16,
+                  }}>
+                    <div style={{ fontSize: 8, letterSpacing: "0.18em", color: "rgba(0,255,100,0.35)", marginBottom: 6 }}>
+                      USER RECORD
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(0,255,100,0.85)", marginBottom: 6 }}>
+                      {selectedAlert.user_name || selectedAlert.user_id}
+                    </div>
+                    <div style={{ fontSize: 9, color: "rgba(0,255,100,0.55)", letterSpacing: "0.1em" }}>
+                      {selectedAlert.phone || "Phone not available"}
+                    </div>
+                  </div>
+
+                  <div style={{
+                    padding: "16px 18px",
+                    background: "rgba(0,255,100,0.03)",
+                    border: "1px solid rgba(0,255,100,0.08)",
+                    borderRadius: 16,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 8, letterSpacing: "0.18em", color: "rgba(0,255,100,0.35)" }}>
+                        CROWD RESPONSES
+                      </span>
+                      <span style={{ fontSize: 8, color: "rgba(0,255,100,0.35)", letterSpacing: "0.12em" }}>
+                        {selectedAlert.crowd_responses?.yes ?? 0} ✓ / {selectedAlert.crowd_responses?.no ?? 0} ✗
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 9, color: "rgba(0,255,100,0.6)", lineHeight: 1.6 }}>
+                      {selectedAlert.crowd_responses
+                        ? "Realtime civilian confirmation data from the site."
+                        : "No crowd response data available yet."}
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{
+                  padding: "16px 18px",
+                  background: "rgba(0,255,100,0.03)",
+                  border: "1px solid rgba(0,255,100,0.08)",
+                  borderRadius: 16,
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <span style={{ fontSize: 8, letterSpacing: "0.18em", color: "rgba(0,255,100,0.35)" }}>
+                      ALERT SCORE
+                    </span>
+                    <span style={{ fontSize: 8, color: "rgba(0,255,100,0.45)", letterSpacing: "0.12em" }}>
+                      {selectedAlert.legitimacy_score}%
+                    </span>
+                  </div>
+                  <div style={{ height: 8, background: "rgba(0,255,100,0.08)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{
+                      width: `${selectedAlert.legitimacy_score}%`,
+                      height: "100%",
+                      background: selectedAlert.legitimacy_score > 60 ? "#00ff64" : selectedAlert.legitimacy_score > 30 ? "#ffb800" : "#ff3b3b",
+                      boxShadow: selectedAlert.legitimacy_score > 60
+                        ? "0 0 8px rgba(0,255,100,0.4)"
+                        : selectedAlert.legitimacy_score > 30
+                        ? "0 0 8px rgba(255,184,0,0.4)"
+                        : "0 0 8px rgba(255,59,59,0.4)",
+                      transition: "width 0.3s ease",
+                    }} />
+                  </div>
+                </div>
+
+                {selectedAlert.ai_brief && (
+                  <div style={{
+                    padding: "16px 18px",
+                    background: "rgba(0,255,100,0.03)",
+                    border: "1px solid rgba(0,255,100,0.08)",
+                    borderRadius: 16,
+                  }}>
+                    <div style={{ fontSize: 8, letterSpacing: "0.18em", color: "rgba(0,255,100,0.35)", marginBottom: 8 }}>
+                      AI BRIEF
+                    </div>
+                    <div style={{ fontSize: 9, color: "rgba(0,255,100,0.6)", lineHeight: 1.6 }}>
+                      {selectedAlert.ai_brief}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ flex: "1 1 340px", minWidth: 300, display: "flex", flexDirection: "column", gap: 18 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 8, letterSpacing: "0.18em", color: "rgba(0,255,100,0.35)", marginBottom: 4 }}>
+                      NEARBY RESPONDERS
+                    </div>
+                    <div style={{ fontSize: 11, color: "rgba(0,255,100,0.75)" }}>
+                      {responders.length} responders detected
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleAssignAll}
+                    disabled={responders.length === 0}
+                    style={{
+                      padding: "10px 14px",
+                      borderRadius: 14,
+                      background: responders.length === 0 ? "rgba(0,255,100,0.08)" : "rgba(0,255,100,0.12)",
+                      border: "1px solid rgba(0,255,100,0.18)",
+                      color: "#00ff64",
+                      fontSize: 9,
+                      letterSpacing: "0.15em",
+                      cursor: responders.length === 0 ? "not-allowed" : "pointer",
+                      fontFamily: "'Share Tech Mono', monospace",
+                    }}
+                  >
+                    ASSIGN ALL
+                  </button>
+                </div>
+
+                <div style={{
+                  flex: 1,
+                  minHeight: 180,
+                  overflowY: "auto",
+                  display: "grid",
+                  gap: 12,
+                }}>
+                  {responders.length === 0 ? (
+                    <div style={{
+                      padding: "24px 20px",
+                      background: "rgba(0,255,100,0.02)",
+                      border: "1px dashed rgba(0,255,100,0.12)",
+                      borderRadius: 16,
+                      textAlign: "center",
+                      color: "rgba(0,255,100,0.4)",
+                      fontSize: 9,
+                      letterSpacing: "0.12em",
+                    }}>
+                      No nearby responders available for this incident.
+                    </div>
+                  ) : responders.map((responder) => {
+                    const assigned = responderAssignments[responder.id];
+                    return (
+                      <div key={responder.id} style={{
+                        padding: "14px 16px",
+                        background: "rgba(0,255,100,0.03)",
+                        border: "1px solid rgba(0,255,100,0.08)",
+                        borderRadius: 16,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 12,
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 10, color: "rgba(0,255,100,0.85)", marginBottom: 4 }}>
+                            {responder.name || responder.id}
+                          </div>
+                          <div style={{ fontSize: 8, color: "rgba(0,255,100,0.45)", letterSpacing: "0.1em" }}>
+                            {formatResponderDistance(responder.distance_km)} • {responder.phone || "no phone"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleAssignResponder(responder)}
+                          style={{
+                            minWidth: 96,
+                            padding: "8px 12px",
+                            borderRadius: 12,
+                            background: assigned ? "#00ff64" : "rgba(0,255,100,0.08)",
+                            border: assigned ? "1px solid rgba(0,255,100,0.2)" : "1px solid rgba(0,255,100,0.12)",
+                            color: assigned ? "#060a07" : "#00ff64",
+                            fontSize: 8,
+                            letterSpacing: "0.15em",
+                            cursor: "pointer",
+                            fontFamily: "'Share Tech Mono', monospace",
+                          }}
+                        >
+                          {assigned ? "ASSIGNED" : "ASSIGN"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div style={{
+                  padding: "14px 16px",
+                  background: "rgba(0,255,100,0.02)",
+                  border: "1px solid rgba(0,255,100,0.08)",
+                  borderRadius: 16,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}>
+                  <span style={{ fontSize: 8, color: "rgba(0,255,100,0.45)", letterSpacing: "0.12em" }}>
+                    {assignedCount} of {responders.length} responders assigned
+                  </span>
+                  <span style={{ fontSize: 8, color: "rgba(0,255,100,0.25)", letterSpacing: "0.12em" }}>
+                    MAP MARKERS SHOWN IN YELLOW
+                  </span>
+                </div>
               </div>
             </div>
-          )}
-
-          {/* Actions */}
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => { /* Phase 3 — open full modal */ }}
-              style={{
-                flex: 1,
-                padding: "8px 0",
-                background: "rgba(0,255,100,0.08)",
-                border: "1px solid rgba(0,255,100,0.2)",
-                color: "#00ff64",
-                fontSize: 8,
-                letterSpacing: "0.15em",
-                cursor: "pointer",
-                fontFamily: "'Share Tech Mono', monospace",
-                textShadow: "0 0 8px rgba(0,255,100,0.4)",
-              }}
-            >
-              FULL DETAIL
-            </button>
-            <button
-              onClick={() => setSelectedId(null)}
-              style={{
-                padding: "8px 14px",
-                background: "none",
-                border: "1px solid rgba(0,255,100,0.08)",
-                color: "rgba(0,255,100,0.3)",
-                fontSize: 8,
-                letterSpacing: "0.15em",
-                cursor: "pointer",
-                fontFamily: "'Share Tech Mono', monospace",
-              }}
-            >
-              DISMISS
-            </button>
           </div>
         </div>
       )}

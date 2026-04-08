@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { loginUser } from "../api/auth";
+import { User, Lock, Loader2 } from "lucide-react";
 
-localStorage.setItem("jakada_user_id", "bf89e3a7-d667-41d2-8f75-58226673f9c0")
-
-const BASE_URL = "https://jakada-server.onrender.com";
+const BASE_URL = import.meta.env.VITE_API_URL || "https://jakada-server.onrender.com";
 
 export default function LoginScreen() {
   const navigate = useNavigate();
@@ -28,7 +27,7 @@ export default function LoginScreen() {
 
       if (profile.role !== "operator") {
         localStorage.clear();
-        throw new Error("Access denied — operator accounts only");
+        throw new Error("Access denied: Operators only");
       }
 
       navigate("/dashboard");
@@ -40,67 +39,177 @@ export default function LoginScreen() {
   };
 
   return (
-    <div className="min-h-screen bg-[#060a07] flex flex-col items-center justify-center font-mono px-8">
-      <div className="w-full max-w-sm flex flex-col gap-8">
-
+    <div
+      style={{
+        minHeight: "100vh",
+        backgroundColor: "#0D0D0D",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "24px",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "400px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "32px",
+        }}
+      >
         {/* Header */}
-        <div className="text-center flex flex-col gap-2">
-          <p className="text-[rgba(0,255,100,0.4)] text-[10px] tracking-widest">
-            SYS//OPERATOR
+        <div style={{ textAlign: "center" }}>
+          <p
+            style={{
+              fontSize: "11px",
+              color: "#8A8A8A",
+              letterSpacing: "2px",
+              textTransform: "uppercase",
+              marginBottom: "8px",
+            }}
+          >
+            System Operator
           </p>
-          <h1 className="text-[#00ff64] text-3xl tracking-widest font-bold">
+          <h1
+            style={{
+              fontSize: "32px",
+              fontWeight: 700,
+              color: "#00E5A0",
+              margin: 0,
+            }}
+          >
             JAKADA
           </h1>
-          <p className="text-[rgba(0,255,100,0.3)] text-[10px] tracking-widest">
-            COMMAND DASHBOARD
+          <p
+            style={{
+              fontSize: "12px",
+              color: "#8A8A8A",
+              marginTop: "4px",
+            }}
+          >
+            Command Dashboard
           </p>
         </div>
 
         {/* Form */}
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <label className="text-[rgba(0,255,100,0.5)] text-[9px] tracking-widest">
-              OPERATOR ID
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+          <div>
+            <label
+              style={{
+                display: "block",
+                fontSize: "12px",
+                fontWeight: 500,
+                color: "#8A8A8A",
+                marginBottom: "6px",
+                textTransform: "uppercase",
+                letterSpacing: "1px",
+              }}
+            >
+              Operator ID
             </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-              placeholder="Enter username"
-              className="bg-[#0a0e0b] border border-[rgba(0,255,100,0.2)] text-[#00ff64] px-4 py-3 text-sm tracking-widest outline-none focus:border-[rgba(0,255,100,0.5)] placeholder:text-[rgba(0,255,100,0.2)]"
-            />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "12px",
+                backgroundColor: "#1A1A1A",
+                border: "1px solid #2A2A2A",
+                borderRadius: "8px",
+                padding: "12px 16px",
+                transition: "border-color 150ms ease",
+              }}
+            >
+              <User size={20} color="#8A8A8A" />
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+                placeholder="Enter your username"
+                disabled={loading}
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                  color: "#FFFFFF",
+                  fontSize: "14px",
+                  fontFamily: "inherit",
+                }}
+              />
+            </div>
           </div>
 
           {error && (
-            <p className="text-[#ff3b3b] text-[9px] tracking-widest">
-              {error}
-            </p>
+            <div
+              style={{
+                backgroundColor: "rgba(255, 77, 77, 0.1)",
+                borderLeft: "3px solid #FF4D4D",
+                padding: "12px 16px",
+                borderRadius: "4px",
+              }}
+            >
+              <p style={{ margin: 0, fontSize: "13px", color: "#FF4D4D" }}>
+                {error}
+              </p>
+            </div>
           )}
 
           <button
             onClick={handleLogin}
             disabled={loading || !username.trim()}
-            className="border border-[rgba(0,255,100,0.3)] py-3 text-[#00ff64] text-[11px] tracking-widest hover:bg-[rgba(0,255,100,0.05)] transition-colors disabled:opacity-40"
+            style={{
+              marginTop: "8px",
+              padding: "12px 24px",
+              backgroundColor: loading ? "#00C896" : "#00E5A0",
+              color: "#000000",
+              border: "none",
+              borderRadius: "8px",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: loading ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "8px",
+              opacity: loading ? 0.7 : 1,
+              transition: "all 150ms ease",
+            }}
           >
-            {loading ? "AUTHENTICATING..." : "LOGIN WITH PASSKEY"}
+            {loading ? (
+              <>
+                <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
+                Authenticating...
+              </>
+            ) : (
+              <>
+                <Lock size={18} />
+                Login with Passkey
+              </>
+            )}
           </button>
         </div>
 
-        <p className="text-[rgba(0,255,100,0.3)] text-[9px] tracking-widest text-center">
-          NEW OPERATOR?{" "}
-          <Link
-            to="/register"
-            className="text-[#00ff64] hover:underline"
-          >
-            CREATE ACCOUNT
-          </Link>
-        </p>
-
-        <p className="text-[rgba(0,255,100,0.2)] text-[8px] tracking-widest text-center">
-          RESTRICTED ACCESS — AUTHORIZED PERSONNEL ONLY
+        <p
+          style={{
+            fontSize: "12px",
+            color: "#444444",
+            textAlign: "center",
+            margin: 0,
+          }}
+        >
+          Restricted Access — Authorized Personnel Only
         </p>
       </div>
+
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }

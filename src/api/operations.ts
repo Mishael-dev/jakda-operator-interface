@@ -90,7 +90,6 @@ export async function cancelOperation(operationId: string) {
 }
 
 export async function getUser(userId: string) {
-  const currentUserId = localStorage.getItem("jakada_user_id") || "";
   // For fetching other users, we need to query by the user-id header
   // The /users/me endpoint returns the current user's data
   // For now, we'll use a query param approach if the backend supports it

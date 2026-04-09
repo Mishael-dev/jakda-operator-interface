@@ -17,7 +17,7 @@ export default function DashboardScreen() {
   const { alerts, loading, hasNewAlerts, newAlertIds, acknowledgeNewAlert } =
     useAlerts();
 
-  const { operations, getOperationForAlert } = useOperations();
+  const { getOperationForAlert } = useOperations();
 
   // Use audio alarm when there are new alerts
   useAudioAlarm(hasNewAlerts);

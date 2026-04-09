@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import type { Responder } from "../hooks/useResponders";
-import { getUser, createOperation } from "../api/operations";
+import {
+  getUser,
+  createOperation,
+  cancelOperation,
+  type Operation,
+} from "../api/operations";
 
 interface User {
   id: string;
@@ -16,8 +21,10 @@ interface AlertDetailsPanelProps {
   lng: number;
   triggeredAt: string;
   responders: Responder[];
+  operation?: Operation | null;
   onClose: () => void;
   onAssign: () => void;
+  onReassign?: () => void;
 }
 
 export function AlertDetailsPanel({
@@ -27,13 +34,19 @@ export function AlertDetailsPanel({
   lng,
   triggeredAt,
   responders,
+  operation,
   onClose,
   onAssign,
+  onReassign,
 }: AlertDetailsPanelProps) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [assigning, setAssigning] = useState(false);
-  const [selectedResponderIds, setSelectedResponderIds] = useState<Set<string>>(new Set());
+  const [cancelling, setCancelling] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedResponderIds, setSelectedResponderIds] = useState<Set<string>>(
+    new Set()
+  );
 
   useEffect(() => {
     async function loadUser() {
@@ -48,6 +61,39 @@ export function AlertDetailsPanel({
     }
     loadUser();
   }, [userId]);
+
+  // Filter responders based on search query
+  const filteredResponders = searchQuery.trim()
+    ? responders.filter((r) =>
+        r.username.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : responders;
+
+  // Get operation status display
+  const getOperationStatusDisplay = () => {
+    if (!operation) return null;
+
+    const statusColors: Record<string, string> = {
+      pending_dispatch: "#FFA500",
+      active: "#00E5A0",
+      completed: "#4A4A4A",
+      cancelled: "#FF4D4D",
+      failed: "#FF4D4D",
+    };
+
+    const statusLabels: Record<string, string> = {
+      pending_dispatch: "Awaiting Response",
+      active: "Help is on the way",
+      completed: "Completed",
+      cancelled: "Cancelled",
+      failed: "Failed - All Declined",
+    };
+
+    return {
+      color: statusColors[operation.status] || "#8A8A8A",
+      label: statusLabels[operation.status] || operation.status,
+    };
+  };
 
   const handleSelectResponder = (responderId: string) => {
     setSelectedResponderIds((prev) => {
@@ -79,12 +125,16 @@ export function AlertDetailsPanel({
   };
 
   const handleAssignAll = async () => {
-    if (responders.length === 0) return;
+    const availableResponders = responders.filter((r) => !r.is_offline);
+    if (availableResponders.length === 0) {
+      alert("No available responders to assign.");
+      return;
+    }
     setAssigning(true);
     try {
       await createOperation({
         alert_id: alertId,
-        responder_ids: responders.map((r) => r.id),
+        responder_ids: availableResponders.map((r) => r.id),
       });
       onAssign();
     } catch (e) {
@@ -95,6 +145,23 @@ export function AlertDetailsPanel({
     }
   };
 
+  const handleCancelOperation = async () => {
+    if (!operation) return;
+    if (!confirm("Cancel this operation? The alert will return to active status."))
+      return;
+
+    setCancelling(true);
+    try {
+      await cancelOperation(operation.id);
+      onReassign?.();
+    } catch (e) {
+      console.error("Failed to cancel:", e);
+      alert("Failed to cancel operation. Please try again.");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const timeAgo = (dateStr: string) => {
     const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
     if (diff < 60) return `${diff}s ago`;
@@ -102,6 +169,9 @@ export function AlertDetailsPanel({
     if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
     return `${Math.floor(diff / 86400)}d ago`;
   };
+
+  const statusDisplay = getOperationStatusDisplay();
+  const hasActiveOperation = operation && ["pending_dispatch", "active"].includes(operation.status);
 
   return (
     <div
@@ -161,6 +231,56 @@ export function AlertDetailsPanel({
           ×
         </button>
       </div>
+
+      {/* Operation Status */}
+      {statusDisplay && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            background: `${statusDisplay.color}15`,
+            border: `1px solid ${statusDisplay.color}`,
+            borderRadius: 8,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                color: statusDisplay.color,
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                marginBottom: 4,
+              }}
+            >
+              Operation Status
+            </div>
+            <div style={{ fontSize: 14, color: "#FFFFFF", fontWeight: 500 }}>
+              {statusDisplay.label}
+            </div>
+          </div>
+          {hasActiveOperation && (
+            <button
+              onClick={handleCancelOperation}
+              disabled={cancelling}
+              style={{
+                background: "transparent",
+                border: "1px solid #FF4D4D",
+                color: "#FF4D4D",
+                padding: "6px 12px",
+                borderRadius: 6,
+                fontSize: 11,
+                cursor: "pointer",
+              }}
+            >
+              {cancelling ? "Cancelling..." : "Cancel"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* User Info */}
       <div style={{ marginBottom: 20 }}>
@@ -234,9 +354,9 @@ export function AlertDetailsPanel({
               letterSpacing: "0.1em",
             }}
           >
-            Nearby Responders ({responders.length})
+            Responders ({filteredResponders.length})
           </div>
-          {responders.length > 0 && (
+          {!hasActiveOperation && filteredResponders.length > 0 && (
             <button
               onClick={handleAssignAll}
               disabled={assigning}
@@ -251,106 +371,221 @@ export function AlertDetailsPanel({
                 cursor: "pointer",
               }}
             >
-              {assigning ? "Assigning..." : "Assign All"}
+              {assigning ? "Assigning..." : "Assign Available"}
             </button>
           )}
         </div>
 
-        {responders.length === 0 ? (
+        {/* Search Input */}
+        {!hasActiveOperation && (
+          <div style={{ marginBottom: 12 }}>
+            <input
+              type="text"
+              placeholder="Search responders by name..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                background: "rgba(26, 26, 26, 1)",
+                border: "1px solid rgba(42, 42, 42, 1)",
+                borderRadius: 8,
+                color: "#FFFFFF",
+                fontSize: 14,
+                outline: "none",
+              }}
+            />
+          </div>
+        )}
+
+        {/* Assigned Responders (when operation exists) */}
+        {hasActiveOperation && operation?.assignments && (
           <div
             style={{
-              padding: 20,
-              textAlign: "center",
-              color: "#8A8A8A",
-              fontSize: 14,
+              marginBottom: 16,
+              padding: 12,
               background: "rgba(26, 26, 26, 1)",
               borderRadius: 8,
             }}
           >
-            No responders within 5km
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {responders.map((responder) => (
-              <div
-                key={responder.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: 12,
-                  background: "rgba(26, 26, 26, 1)",
-                  borderRadius: 8,
-                  border: selectedResponderIds.has(responder.id)
-                    ? "1px solid #00E5A0"
-                    : "1px solid transparent",
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 14, color: "#FFFFFF" }}>
-                    {responder.username}
+            <div
+              style={{
+                fontSize: 10,
+                color: "#8A8A8A",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                marginBottom: 8,
+              }}
+            >
+              Assigned Responders
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {operation.assignments.map((assignment) => (
+                <div
+                  key={assignment.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "8px 12px",
+                    background: "rgba(20, 20, 20, 0.5)",
+                    borderRadius: 6,
+                  }}
+                >
+                  <div style={{ fontSize: 13, color: "#FFFFFF" }}>
+                    {assignment.responder?.username || "Unknown"}
                   </div>
                   <div
                     style={{
-                      fontSize: 12,
-                      color: "#8A8A8A",
-                      marginTop: 4,
-                      display: "flex",
-                      gap: 12,
+                      fontSize: 11,
+                      color:
+                        assignment.status === "accepted"
+                          ? "#00E5A0"
+                          : assignment.status === "declined"
+                          ? "#FF4D4D"
+                          : "#FFA500",
+                      textTransform: "capitalize",
                     }}
                   >
-                    <span>{responder.distance_km?.toFixed(1)} km</span>
-                    <span>ETA: {responder.eta_minutes} min</span>
+                    {assignment.status.replace("_", " ")}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleSelectResponder(responder.id)}
-                  disabled={assigning}
-                  style={{
-                    background: selectedResponderIds.has(responder.id)
-                      ? "#00E5A0"
-                      : "transparent",
-                    border: "1px solid #00E5A0",
-                    color: selectedResponderIds.has(responder.id)
-                      ? "#0D0D0D"
-                      : "#00E5A0",
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    fontSize: 11,
-                    fontWeight: 500,
-                    cursor: "pointer",
-                    minWidth: 70,
-                  }}
-                >
-                  {selectedResponderIds.has(responder.id) ? "Selected" : "Assign"}
-                </button>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
 
-        {/* Assign Selected Button */}
-        {selectedResponderIds.size > 0 && (
-          <button
-            onClick={handleAssignSelected}
-            disabled={assigning}
-            style={{
-              width: "100%",
-              marginTop: 12,
-              background: "#00E5A0",
-              border: "none",
-              color: "#0D0D0D",
-              padding: "12px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            {assigning
-              ? "Assigning..."
-              : `Assign ${selectedResponderIds.size} Responder${selectedResponderIds.size > 1 ? "s" : ""}`}
-          </button>
+        {/* Responder Selection List */}
+        {!hasActiveOperation && (
+          <>
+            {filteredResponders.length === 0 ? (
+              <div
+                style={{
+                  padding: 20,
+                  textAlign: "center",
+                  color: "#8A8A8A",
+                  fontSize: 14,
+                  background: "rgba(26, 26, 26, 1)",
+                  borderRadius: 8,
+                }}
+              >
+                {searchQuery
+                  ? "No responders found"
+                  : "No responders within 5km"}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {filteredResponders.map((responder) => (
+                  <div
+                    key={responder.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: 12,
+                      background: "rgba(26, 26, 26, 1)",
+                      borderRadius: 8,
+                      border: selectedResponderIds.has(responder.id)
+                        ? "1px solid #00E5A0"
+                        : "1px solid transparent",
+                      opacity: responder.is_offline ? 0.6 : 1,
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 14, color: "#FFFFFF" }}>
+                        {responder.username}
+                        {responder.is_offline && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color: "#FF4D4D",
+                              marginLeft: 8,
+                              padding: "2px 6px",
+                              background: "rgba(255, 77, 77, 0.15)",
+                              borderRadius: 4,
+                            }}
+                          >
+                            Offline
+                          </span>
+                        )}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "#8A8A8A",
+                          marginTop: 4,
+                          display: "flex",
+                          gap: 12,
+                        }}
+                      >
+                        <span>
+                          {responder.distance_km?.toFixed(1) || "?"} km
+                        </span>
+                        <span>
+                          ETA: {responder.is_offline ? "N/A" : `${responder.eta_minutes || "?"} min`}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleSelectResponder(responder.id)}
+                      disabled={assigning || responder.is_offline}
+                      style={{
+                        background: selectedResponderIds.has(responder.id)
+                          ? "#00E5A0"
+                          : "transparent",
+                        border: responder.is_offline
+                          ? "1px solid #4A4A4A"
+                          : "1px solid #00E5A0",
+                        color: selectedResponderIds.has(responder.id)
+                          ? "#0D0D0D"
+                          : responder.is_offline
+                          ? "#4A4A4A"
+                          : "#00E5A0",
+                        padding: "6px 12px",
+                        borderRadius: 6,
+                        fontSize: 11,
+                        fontWeight: 500,
+                        cursor: responder.is_offline ? "not-allowed" : "pointer",
+                        minWidth: 70,
+                      }}
+                    >
+                      {selectedResponderIds.has(responder.id)
+                        ? "Selected"
+                        : responder.is_offline
+                        ? "Offline"
+                        : "Assign"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Assign Selected Button */}
+            {selectedResponderIds.size > 0 && (
+              <button
+                onClick={handleAssignSelected}
+                disabled={assigning}
+                style={{
+                  width: "100%",
+                  marginTop: 12,
+                  background: "#00E5A0",
+                  border: "none",
+                  color: "#0D0D0D",
+                  padding: "12px",
+                  borderRadius: 8,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                {assigning
+                  ? "Assigning..."
+                  : `Dispatch ${selectedResponderIds.size} Responder${
+                      selectedResponderIds.size > 1 ? "s" : ""
+                    }`}
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

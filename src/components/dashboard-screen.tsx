@@ -7,6 +7,7 @@ import { RadiusCircle } from "./Map/RadiusCircle";
 import { AlertDetailsPanel } from "./AlertDetailsPanel";
 import { useAlerts } from "../hooks/useAlerts";
 import { useResponders } from "../hooks/useResponders";
+import { useOperations } from "../hooks/useOperations";
 import { useAudioAlarm } from "../hooks/useAudioAlarm";
 
 export default function DashboardScreen() {
@@ -16,10 +17,15 @@ export default function DashboardScreen() {
   const { alerts, loading, hasNewAlerts, newAlertIds, acknowledgeNewAlert } =
     useAlerts();
 
+  const { operations, getOperationForAlert } = useOperations();
+
   // Use audio alarm when there are new alerts
   useAudioAlarm(hasNewAlerts);
 
   const selectedAlert = alerts.find((a) => a.id === selectedAlertId);
+  const selectedAlertOperation = selectedAlert
+    ? getOperationForAlert(selectedAlert.id)
+    : null;
 
   const { responders } = useResponders(
     selectedAlert?.lat ?? null,
@@ -54,7 +60,13 @@ export default function DashboardScreen() {
   }, []);
 
   const handleAssign = useCallback(() => {
-    setSelectedAlertId(null);
+    // Keep panel open but refresh operations
+    // The operation will now be linked to the alert
+  }, []);
+
+  const handleReassign = useCallback(() => {
+    // Reset operations and allow new assignment
+    // The alert will be back to active status
   }, []);
 
   // Auto-zoom to first new alert
@@ -387,8 +399,10 @@ export default function DashboardScreen() {
           lng={selectedAlert.lng}
           triggeredAt={selectedAlert.triggered_at}
           responders={responders}
+          operation={selectedAlertOperation}
           onClose={handleClosePanel}
           onAssign={handleAssign}
+          onReassign={handleReassign}
         />
       )}
 

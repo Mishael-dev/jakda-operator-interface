@@ -9,5 +9,10 @@ export default defineConfig({
     react(),
     babel({ presets: [reactCompilerPreset()] }),
     tailwindcss()
-  ],
+  ],server: { 
+    port: 3001, 
+    strictPort: true,
+    host: '0.0.0.0',
+    allowedHosts: ['operator.jakada.local'],
+  },
 })

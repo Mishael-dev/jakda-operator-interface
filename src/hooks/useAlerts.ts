@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const BASE_URL = "https://jakada-server.onrender.com";
+const BASE_URL =
+  import.meta.env.VITE_API_URL || "https://jakada-server.onrender.com";
 
 export interface Alert {
   id: string;

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { calculateDistance, calculateETA } from "../utils/geo";
 
-const BASE_URL = "https://jakada-server.onrender.com";
+const BASE_URL =
+  import.meta.env.VITE_API_URL || "https://jakada-server.onrender.com";
 
 export interface Responder {
   id: string;
